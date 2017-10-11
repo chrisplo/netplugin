@@ -1,4 +1,3 @@
-
 .PHONY: all all-CI build clean default unit-test release tar checks go-version gofmt-src \
 	golint-src govet-src run-build compile-with-docker
 
@@ -16,6 +15,8 @@ NAME := netplugin
 VERSION_FILE := $(NAME)-version
 VERSION := `cat $(VERSION_FILE)`
 TAR_EXT := tar.bz2
+# BUILD_VERSION=1.2 make --> 1.2-1097d2a7, otherwise devbuild-1097d2a7
+export NETPLUGIN_CONTAINER_TAG := $(or $(BUILD_VERSION),devbuild)-$(shell ./scripts/getGitCommit.sh)
 TAR_FILENAME := $(NAME)-$(VERSION).$(TAR_EXT)
 TAR_LOC := .
 TAR_FILE := $(TAR_LOC)/$(TAR_FILENAME)
@@ -100,7 +101,7 @@ compile-with-docker:
 	docker build \
 		--build-arg NIGHTLY_RELEASE=${NIGHTLY_RELEASE} \
 		--build-arg BUILD_VERSION=${BUILD_VERSION} \
-		-t netplugin:$${BUILD_VERSION:-devbuild}-$$(./scripts/getGitCommit.sh) .
+		-t netplugin-build:$${BUILD_VERSION:-devbuild}-$$(./scripts/getGitCommit.sh) .
 
 build-docker-image: start
 	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-build-docker-image"'
@@ -313,11 +314,19 @@ host-plugin-release:
 	@echo dev: need docker login with user in contiv org
 	docker plugin push ${CONTIV_V2PLUGIN_NAME}
 
-only-tar:
+##########################
+## Packaging and Releasing
+##########################
 
-tar: clean-tar
-	CONTIV_NODES=1 ${MAKE} build
-	@tar -jcf $(TAR_FILE) -C $(GOPATH)/src/github.com/contiv/netplugin/bin netplugin netmaster netctl contivk8s netcontiv -C $(GOPATH)/src/github.com/contiv/netplugin/scripts contrib/completion/bash/netctl -C $(GOPATH)/src/github.com/contiv/netplugin/scripts get-contiv-diags
+# build tarball
+tar: compile-with-docker
+	version=$(docker run --rm netplugin-build:$(NETPLUGIN_CONTAINER_TAG) \
+					-xO netplugin-version) \
+	&& docker run --rm netplugin-build:$(NETPLUGIN_CONTAINER_TAG) \
+		-C /go/bin netplugin netmaster netctl contivk8s netcontiv \
+		-C /go/src/github.com/contiv/netplugin/scripts \
+			contrib/completion/bash/netctl get-contiv-diags \
+	| bzip2 > $(TAR_FILE)
 
 clean-tar:
 	@rm -f $(TAR_LOC)/*.$(TAR_EXT)

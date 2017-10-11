@@ -14,15 +14,18 @@
 ##
 
 ##
-# Container image for netplugin
+# Container image for compiled netplugin binaries
 #
-# Run netplugin:
-# docker run --net=host <image> -host-label=<label>
+# Get netplugin, netmaster, and netctl:
+# docker run <image>
+#
+# Get contivk8s or other files, hint: -C can be used more than once
+# docker run <image> C /go/bin contivk8s
 ##
 
 FROM golang:1.7.6
 
-# Insert your proxy server settings if this build is running behind 
+# Insert your proxy server settings if this build is running behind
 # a proxy.
 #ENV http_proxy ""
 #ENV https_proxy ""
@@ -52,3 +55,6 @@ RUN GOPATH=/go/ \
     make compile \
       && cp scripts/contrib/completion/bash/netctl /etc/bash_completion.d/netctl \
       && netplugin -version
+
+ENTRYPOINT ["/bin/tar", "-c"]
+CMD ["-C", "/go/bin", "netplugin", "netmaster", "netctl"]
