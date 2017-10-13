@@ -15,7 +15,7 @@ NAME := netplugin
 # and 'release' targets.
 VERSION_FILE := $(NAME)-version
 VERSION := `cat $(VERSION_FILE)`
-TAR_EXT := tar.bz2
+TAR_EXT ?= tar.bz2
 TAR_FILENAME := $(NAME)-$(VERSION).$(TAR_EXT)
 TAR_LOC := .
 TAR_FILE := $(TAR_LOC)/$(TAR_FILENAME)
@@ -29,6 +29,7 @@ CI_HOST_TARGETS ?= "host-unit-test host-integ-test host-build-docker-image"
 SYSTEM_TESTS_TO_RUN ?= "00SSH|Basic|Network|Policy|TestTrigger|ACIM|Netprofile"
 K8S_SYSTEM_TESTS_TO_RUN ?= "00SSH|Basic|Network|Policy"
 ACI_GW_IMAGE ?= "contiv/aci-gw:04-12-2017.2.2_1n"
+CONIV_NODES ?= 3
 
 all: build unit-test system-test ubuntu-tests
 
@@ -121,7 +122,7 @@ update:
 # setting CONTIV_NODES=<number> while calling 'make demo' can be used to bring
 # up a cluster of <number> nodes. By default <number> = 1
 start:
-	CONTIV_DOCKER_VERSION="$${CONTIV_DOCKER_VERSION:-$(DEFAULT_DOCKER_VERSION)}" CONTIV_NODE_OS=${CONTIV_NODE_OS} vagrant up
+	CONTIV_NODES=$(CONTIV_NODES) CONTIV_DOCKER_VERSION="$${CONTIV_DOCKER_VERSION:-$(DEFAULT_DOCKER_VERSION)}" CONTIV_NODE_OS=${CONTIV_NODE_OS} vagrant up
 
 # ===================================================================
 #kubernetes demo targets
@@ -196,7 +197,7 @@ demo-ubuntu:
 	CONTIV_NODE_OS=ubuntu make demo
 
 stop:
-	CONTIV_NODES=$${CONTIV_NODES:-3} vagrant destroy -f
+	CONTIV_NODES=$(CONTIV_NODES) vagrant destroy -f
 
 demo: ssh-build
 	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-restart host-swarm-restart"'
@@ -313,18 +314,48 @@ host-plugin-release:
 	@echo dev: need docker login with user in contiv org
 	docker plugin push ${CONTIV_V2PLUGIN_NAME}
 
-only-tar:
+##########################
+## Packaging and Releasing
+##########################
 
-tar: clean-tar
-	CONTIV_NODES=1 ${MAKE} build
-	@tar -jcf $(TAR_FILE) -C $(GOPATH)/src/github.com/contiv/netplugin/bin netplugin netmaster netctl contivk8s netcontiv -C $(GOPATH)/src/github.com/contiv/netplugin/scripts contrib/completion/bash/netctl -C $(GOPATH)/src/github.com/contiv/netplugin/scripts get-contiv-diags
+# container go path is different than VM
+GO_BIN_PATH ?= $(GOPATH)/src/github.com/contiv/netplugin/bin
+# container does not have bzip
+TAR_COMPRESSION ?= j
+
+# set BUILD_VERSION same as compile-with-docker to get correct tagged image
+tar-docker-export:
+	# The version name is calculated during build and written to
+	# netplugin-version in the container, and determines the tarball file name.
+	# Run 'make tar' in the container with without compression then use tar
+	# create inside the container piped to tar extract outside the container to
+	# get the file written outside the container without an extra round trip
+	@echo Extracting from netplugin:$${BUILD_VERSION:-devBuild}-$(shell ./scripts/getGitCommit.sh)
+	docker run --entrypoint bash \
+		netplugin:$${BUILD_VERSION:-devBuild}-$$(./scripts/getGitCommit.sh) \
+		-c 'export GO_BIN_PATH=/go/bin TAR_COMPRESSION= TAR_EXT=tar; \
+			make host-tar 1>&2 \
+			&& tar -c $(NAME)-$(VERSION).tar' | tar -x
+
+# build tarball
+# GO_BIN_PATH allows for tar-docker-export to indicate the target for compiled binaries
+# the TAR_COMPRESSION allows for missing bzip2
+host-tar:
+	tar -${TAR_COMPRESSION}cf $(TAR_FILE) \
+		-C $(GO_BIN_PATH) netplugin netmaster netctl contivk8s netcontiv \
+		-C $(GOPATH)/src/github.com/contiv/netplugin/scripts contrib/completion/bash/netctl \
+		-C $(GOPATH)/src/github.com/contiv/netplugin/scripts get-contiv-diags
+
+# target specific variable to only create a single VM
+tar: CONTIV_NODES=1
+tar: build host-tar
 
 clean-tar:
 	@rm -f $(TAR_LOC)/*.$(TAR_EXT)
 	@rm -f ${VERSION_FILE}
 
 # GITHUB_USER and GITHUB_TOKEN are needed be set to run github-release
-release: tar
+release: clean-tar tar
 	TAR_FILENAME=$(TAR_FILENAME) TAR_FILE=$(TAR_FILE) \
 	OLD_VERSION=${OLD_VERSION} BUILD_VERSION=${BUILD_VERSION} \
 	NIGHTLY_RELEASE=${NIGHTLY_RELEASE} scripts/release.sh
