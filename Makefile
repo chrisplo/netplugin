@@ -290,7 +290,6 @@ host-restart:
 
 # create the rootfs for v2plugin. this is required for docker plugin create command
 host-pluginfs-create:
-	@echo dev: creating a docker v2plugin rootfs ...
 	sh scripts/v2plugin_rootfs.sh
 
 # if rootfs already exists, copy newly compiled contiv binaries and start plugin on local host
@@ -305,18 +304,18 @@ host-plugin-update:
 # cleanup all containers, plugins and start the v2plugin on all hosts
 host-plugin-restart:
 	@echo dev: restarting services...
-	cp bin/netplugin bin/netmaster bin/netctl install/v2plugin/rootfs
-	cd $(GOPATH)/src/github.com/contiv/netplugin/scripts/python && PYTHONIOENCODING=utf-8 ./startPlugin.py -nodes ${CLUSTER_NODE_IPS} -plugintype "v2plugin"
+	cd $(GOPATH)/src/github.com/contiv/netplugin/scripts/python \
+		&& PYTHONIOENCODING=utf-8 ./startPlugin.py -nodes ${CLUSTER_NODE_IPS} \
+			-plugintype "v2plugin"
 
 # complete workflow to create rootfs, create/enable plugin and start swarm-mode
-demo-v2plugin:
-	CONTIV_V2PLUGIN_NAME="$${CONTIV_V2PLUGIN_NAME:-contiv/v2plugin:0.1}" CONTIV_DOCKER_VERSION="$${CONTIV_DOCKER_VERSION:-1.13.1}" CONTIV_DOCKER_SWARM="$${CONTIV_DOCKER_SWARM:-swarm_mode}" make ssh-build
-	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-pluginfs-create host-plugin-restart host-swarm-restart"'
+# assume cluster has been started
+demo-v2plugin: compile-with-docker host-pluginfs-create
+#	CONTIV_DOCKER_VERSION="$${CONTIV_DOCKER_VERSION:-1.13.1}" CONTIV_DOCKER_SWARM="$${CONTIV_DOCKER_SWARM:-swarm_mode}" make ssh-build
+	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-plugin-restart host-swarm-restart"'
 
 # release a v2 plugin
-host-plugin-release:
-	@echo dev: creating a docker v2plugin ...
-	sh scripts/v2plugin_rootfs.sh
+plugin-release: compile-with-docker host-pluginfs-create
 	docker plugin create ${CONTIV_V2PLUGIN_NAME} install/v2plugin
 	@echo dev: pushing ${CONTIV_V2PLUGIN_NAME} to docker hub
 	@echo dev: need docker login with user in contiv org
