@@ -18,12 +18,13 @@ NAME := netplugin
 # we evaluate and set the value of version once in a file and use it in 'tar'
 # and 'release' targets.
 VERSION_FILE := $(NAME)-version
-VERSION := `cat $(VERSION_FILE)`
+VERSION := $(shell cat $(VERSION_FILE))
+TAR := $(shell command -v gtar || echo command -v tar || echo "Could not find tar")
 TAR_EXT := tar.bz2
-NETPLUGIN_CONTAINER_TAG := $(shell ./scripts/getGitCommit.sh)
+export NETPLUGIN_CONTAINER_TAG := $(shell ./scripts/getGitCommit.sh)
 TAR_FILENAME := $(NAME)-$(VERSION).$(TAR_EXT)
 TAR_LOC := .
-TAR_FILE := $(TAR_LOC)/$(TAR_FILENAME)
+export NETPLUGIN_TAR_FILE := $(TAR_LOC)/$(TAR_FILENAME)
 GO_MIN_VERSION := 1.7
 GO_MAX_VERSION := 1.8
 GO_VERSION := $(shell go version | cut -d' ' -f3 | sed 's/go//')
@@ -31,6 +32,7 @@ CI_HOST_TARGETS ?= "host-unit-test host-integ-test host-build-docker-image"
 SYSTEM_TESTS_TO_RUN ?= "00SSH|Basic|Network|Policy|TestTrigger|ACIM|Netprofile"
 K8S_SYSTEM_TESTS_TO_RUN ?= "00SSH|Basic|Network|Policy"
 ACI_GW_IMAGE ?= "contiv/aci-gw:04-12-2017.2.2_1n"
+export CONTIV_V2PLUGIN_NAME ?= contiv/v2plugin:0.1
 
 all: build unit-test system-test ubuntu-tests
 
@@ -327,15 +329,18 @@ plugin-release: compile-with-docker host-pluginfs-create
 
 # build tarball
 tar: compile-with-docker
-	@# $(TAR_FILE) depends on local file netplugin-version (exists in image),
+	@# $(NETPLUGIN_TAR_FILE) depends on local file netplugin-version (exists in image),
 	@# but it is evaluated after we have extracted that file to local disk
-	docker rm netplugin-build || :
+	docker rm netplugin-build 2>&1 >/dev/null || :
 	c_id=$$(docker create --name netplugin-build netplugin-build:$(NETPLUGIN_CONTAINER_TAG)) && \
-	docker cp $${c_id}:/go/src/github.com/contiv/netplugin/netplugin-version ./ && \
+	docker cp \
+		$${c_id}:/go/src/github.com/contiv/netplugin/netplugin-version ./ && \
 	for f in netplugin netmaster netctl contivk8s netcontiv; do \
-		docker cp $${c_id}:/go/bin/$$f bin/$$f; done && \
+		docker cp -a $${c_id}:/go/bin/$$f bin/$$f; done && \
 	docker rm $${c_id}
-	tar -jcf $(TAR_FILE) \
+	$(TAR) --version | grep -q GNU \
+		|| (echo Please use GNU tar as \'gtar\' or \'tar\'; exit 1)
+	$(TAR) --owner=0 --group=0 -jcf $(NETPLUGIN_TAR_FILE) \
 		-C bin netplugin netmaster netctl contivk8s netcontiv \
 		-C ../scripts contrib/completion/bash/netctl get-contiv-diags
 
@@ -345,7 +350,7 @@ clean-tar:
 
 # GITHUB_USER and GITHUB_TOKEN are needed be set to run github-release
 release: tar
-	TAR_FILENAME=$(TAR_FILENAME) TAR_FILE=$(TAR_FILE) \
+	TAR_FILENAME=$(TAR_FILENAME) TAR_FILE=$(NETPLUGIN_TAR_FILE) \
 	OLD_VERSION=${OLD_VERSION} BUILD_VERSION=${BUILD_VERSION} \
 	NIGHTLY_RELEASE=${NIGHTLY_RELEASE} scripts/release.sh
 	@make clean-tar

@@ -1,9 +1,5 @@
 # Docker v2plugin container with OVS / netplugin / netmaster
 
-# Binaries have already been built in netplugin-build container
-ARG NETPLUGIN_BUILD_TAG=latest
-FROM netplugin-build:${NETPLUGIN_BUILD_TAG} as netplugin
-
 FROM alpine:3.5
 LABEL maintainer "Cisco Contiv (https://contiv.github.io)"
 
@@ -14,7 +10,12 @@ RUN mkdir -p /run/docker/plugins /etc/openvswitch /var/run/contiv/log \
  && wget https://github.com/andyshinn/alpine-pkg-glibc/releases/download/2.23-r1/glibc-2.23-r1.apk \
  && apk --no-cache add glibc-2.23-r1.apk
 
-COPY --from=netplugin /go/bin/netplugin /go/bin/netmaster /go/bin/netctl /
+# copy in binaries and scripts
+ARG TAR_FILE
+ADD ${TAR_FILE} /
 COPY startcontiv.sh /
 
+# this container is never run, it is exported for docker to run as a plugin,
+# the startcontiv.sh script and the netplugin binaries are copied into the
+# plugin's rootfs after export, this avoids copying into and out of container
 ENTRYPOINT ["/startcontiv.sh"]

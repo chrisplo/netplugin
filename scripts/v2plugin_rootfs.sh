@@ -11,19 +11,33 @@ set -euo pipefail
 echo "Creating rootfs for v2plugin: ${CONTIV_V2PLUGIN_NAME}"
 
 # clear out old plugin completely
-sudo rm -rf install/v2plugin/rootfs install/v2plugin/config.json
+sudo rm -rf install/v2plugin/rootfs
+mkdir -p install/v2plugin/rootfs
 
 # config.json is docker's runtime configuration for the container
 # delete comments and replace placeholder with ${CONTIV_V2PLUGIN_NAME}
 sed '/##/d;s/__CONTIV_V2PLUGIN_NAME__/${CONTIV_V2PLUGIN_NAME}/' \
     install/v2plugin/config.template > install/v2plugin/config.json
 
+# make and copy over binaries for the docker build
+make tar
+
+# copy over binaries
+cp ${NETPLUGIN_TAR_FILE} install/v2plugin/
+
 DOCKER_IMAGE=contivrootfs:${NETPLUGIN_CONTAINER_TAG}
-docker build -t ${DOCKER_IMAGE} install/v2plugin
+docker build -t ${DOCKER_IMAGE} \
+    --build-arg TAR_FILE=$(basename "${NETPLUGIN_TAR_FILE}") install/v2plugin
+
 # creates a ready to run container but doesn't run it
-id=$(docker create $DOCKER_IMAGE true)
-mkdir -p install/v2plugin/rootfs
-sudo docker export "${id}" | sudo gtar -x -C install/v2plugin/rootfs
+DOCKER_CONTAINER=$DOCKER_IMAGE
+id=$(docker create $DOCKER_CONTAINER true)
+
+# create the rootfs based on the created container contents
+# must have gnu tar, bsd tar does not work, make tar already verified gnu
+TAR=$(command -v gtar || echo command -v tar || echo "Could not find tar")
+docker export "${id}" | sudo "${TAR}" -x -C install/v2plugin/rootfs
+
 # clean up created container
 docker rm -vf "${id}"
 
