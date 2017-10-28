@@ -24,6 +24,7 @@ export NETPLUGIN_CONTAINER_TAG := $(shell ./scripts/getGitCommit.sh)
 TAR_FILENAME := $(NAME)-$(VERSION).$(TAR_EXT)
 TAR_LOC := .
 export NETPLUGIN_TAR_FILE := $(TAR_LOC)/$(TAR_FILENAME)
+export V2PLUGIN_TAR_FILENAME := v2plugin-$(VERSION).tar.gz
 GO_MIN_VERSION := 1.7
 GO_MAX_VERSION := 1.8
 GO_VERSION := $(shell go version | cut -d' ' -f3 | sed 's/go//')
@@ -293,36 +294,55 @@ host-restart:
 host-pluginfs-create:
 	./scripts/v2plugin_rootfs.sh
 
-# if rootfs already exists, copy newly compiled contiv binaries and start plugin on local host
-host-plugin-update:
-	@echo dev: updating docker v2plugin ...
+host-plugin-remove:
+	@echo dev: removing docker v2plugin ...
 	docker plugin disable ${CONTIV_V2PLUGIN_NAME}
 	docker plugin rm -f ${CONTIV_V2PLUGIN_NAME}
-	cp bin/netplugin bin/netmaster bin/netctl install/v2plugin/rootfs
+
+host-plugin-create:
+	@echo Creating docker v2plugin
 	docker plugin create ${CONTIV_V2PLUGIN_NAME} install/v2plugin
 	docker plugin enable ${CONTIV_V2PLUGIN_NAME}
 
-# cleanup all containers, plugins and start the v2plugin on all hosts
+# cleanup all containers, recreate and start the v2plugin on all hosts
 host-plugin-restart:
 	@echo dev: restarting services...
 	cd $(GOPATH)/src/github.com/contiv/netplugin/scripts/python \
 		&& PYTHONIOENCODING=utf-8 ./startPlugin.py -nodes ${CLUSTER_NODE_IPS} \
 			-plugintype "v2plugin"
 
-demo-v2plugin-restart:
-	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-plugin-restart host-swarm-restart"'
+# unpack v2plugin archive created by host-pluginfs-create
+host-pluginfs-unpack:
+	# clear out old plugin completely
+	sudo rm -rf install/v2plugin/rootfs
+	mkdir -p install/v2plugin/rootfs
+	#mkdir /v2plugin/rootfs
+	#cp install/v2plugin/config.json /v2plugin
+	sudo tar -xf install/v2plugin/${V2PLUGIN_TAR_FILENAME} \
+		-C install/v2plugin/rootfs/
+		#-C /v2plugin/rootfs install/v2plugin/rootfs/${V2PLUGIN_TAR_FILENAME}
 
-# complete workflow to create rootfs, create/enable plugin and start swarm-mode
+#demo-v2plugin: start host-pluginfs-create demo-v2plugin-restart
+#demo-v2plugin-restart:
+#	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-plugin-restart host-swarm-restart"'
+
+# demo v2plugin on VMs: creates plugin assets, starts docker swarm
+# then creates and enables v2plugin
 demo-v2plugin: export CONTIV_DOCKER_VERSION ?= 1.13.1
 demo-v2plugin: export CONTIV_DOCKER_SWARM := swarm_mode
-demo-v2plugin: start host-pluginfs-create demo-v2plugin-restart
+demo-v2plugin: start
+	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-pluginfs-create host-pluginfs-unpack host-plugin-restart host-swarm-restart"'
 
-# release a v2 plugin
-plugin-release: host-pluginfs-create
-	docker plugin create ${CONTIV_V2PLUGIN_NAME} install/v2plugin
+# release a v2 plugin from the VM
+host-plugin-release: host-pluginfs-create host-plugin-create
 	@echo dev: pushing ${CONTIV_V2PLUGIN_NAME} to docker hub
 	@echo dev: need docker login with user in contiv org
 	docker plugin push ${CONTIV_V2PLUGIN_NAME}
+
+# set NETPLUGIN_BIN_DIR as destination directory for netplugin binaries
+unpack_tar:
+	[[ -n "${NETPLUGIN_BIN_DIR}" ]]
+	tar --preserve -xf $(NETPLUGIN_TAR_FILE) -C $(NETPLUGIN_BIN_DIR)
 
 ##########################
 ## Packaging and Releasing

@@ -11,9 +11,6 @@ set -euxo pipefail
 
 echo "Creating rootfs for v2plugin: ${CONTIV_V2PLUGIN_NAME}"
 
-# clear out old plugin completely
-sudo rm -rf install/v2plugin/rootfs
-mkdir -p install/v2plugin/rootfs
 
 # config.json is docker's runtime configuration for the container
 # delete comments and replace placeholder with ${CONTIV_V2PLUGIN_NAME}
@@ -30,12 +27,10 @@ docker build -t ${DOCKER_IMAGE} \
 # creates a ready to run container but doesn't run it
 id=$(docker create $DOCKER_IMAGE true)
 
-# create the rootfs based on the created container contents
-# must have gnu tar, bsd tar does not work, make tar already verified gnu
-TAR=$(command -v gtar || echo command -v tar || echo "Could not find tar")
-docker export "${id}" | sudo "${TAR}" -x -C install/v2plugin/rootfs
+# create the rootfs archive based on the created container contents
+sudo docker export "${id}" > install/v2plugin/${V2PLUGIN_TAR_FILENAME}
 
 # clean up created container
 docker rm -vf "${id}"
 
-echo netplugin\'s docker plugin rootfs is at install/v2plugin/rootfs
+echo netplugin\'s docker plugin rootfs is archived at install/v2plugin/${V2PLUGIN_TAR_FILENAME}
