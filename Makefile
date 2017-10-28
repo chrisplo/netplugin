@@ -6,7 +6,6 @@
 .PHONY: all all-CI build clean default unit-test release tar checks go-version gofmt-src \
 	golint-src govet-src run-build compile-with-docker
 
-DEFAULT_DOCKER_VERSION := 1.12.6
 SHELL := /bin/bash
 EXCLUDE_DIRS := bin docs Godeps scripts vagrant vendor install
 PKG_DIRS := $(filter-out $(EXCLUDE_DIRS),$(subst /,,$(sort $(dir $(wildcard */)))))
@@ -131,7 +130,7 @@ update:
 # setting CONTIV_NODES=<number> while calling 'make demo' can be used to bring
 # up a cluster of <number> nodes. By default <number> = 1
 start:
-	CONTIV_DOCKER_VERSION="$${CONTIV_DOCKER_VERSION:-$(DEFAULT_DOCKER_VERSION)}" CONTIV_NODE_OS=${CONTIV_NODE_OS} vagrant up
+	CONTIV_NODE_OS=${CONTIV_NODE_OS} vagrant up
 
 # ===================================================================
 #kubernetes demo targets
@@ -292,7 +291,7 @@ host-restart:
 
 # create the rootfs for v2plugin. this is required for docker plugin create command
 host-pluginfs-create:
-	sh scripts/v2plugin_rootfs.sh
+	./scripts/v2plugin_rootfs.sh
 
 # if rootfs already exists, copy newly compiled contiv binaries and start plugin on local host
 host-plugin-update:
@@ -310,14 +309,16 @@ host-plugin-restart:
 		&& PYTHONIOENCODING=utf-8 ./startPlugin.py -nodes ${CLUSTER_NODE_IPS} \
 			-plugintype "v2plugin"
 
-# complete workflow to create rootfs, create/enable plugin and start swarm-mode
-# assume cluster has been started
-demo-v2plugin: compile-with-docker host-pluginfs-create
-#	CONTIV_DOCKER_VERSION="$${CONTIV_DOCKER_VERSION:-1.13.1}" CONTIV_DOCKER_SWARM="$${CONTIV_DOCKER_SWARM:-swarm_mode}" make ssh-build
+demo-v2plugin-restart:
 	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-plugin-restart host-swarm-restart"'
 
+# complete workflow to create rootfs, create/enable plugin and start swarm-mode
+demo-v2plugin: export CONTIV_DOCKER_VERSION ?= 1.13.1
+demo-v2plugin: export CONTIV_DOCKER_SWARM := swarm_mode
+demo-v2plugin: start host-pluginfs-create demo-v2plugin-restart
+
 # release a v2 plugin
-plugin-release: compile-with-docker host-pluginfs-create
+plugin-release: host-pluginfs-create
 	docker plugin create ${CONTIV_V2PLUGIN_NAME} install/v2plugin
 	@echo dev: pushing ${CONTIV_V2PLUGIN_NAME} to docker hub
 	@echo dev: need docker login with user in contiv org
@@ -331,7 +332,7 @@ plugin-release: compile-with-docker host-pluginfs-create
 tar: compile-with-docker
 	@# $(NETPLUGIN_TAR_FILE) depends on local file netplugin-version (exists in image),
 	@# but it is evaluated after we have extracted that file to local disk
-	docker rm netplugin-build 2>&1 >/dev/null || :
+	docker rm netplugin-build >/dev/null 2>&1 || :
 	c_id=$$(docker create --name netplugin-build netplugin-build:$(NETPLUGIN_CONTAINER_TAG)) && \
 	docker cp \
 		$${c_id}:/go/src/github.com/contiv/netplugin/netplugin-version ./ && \
