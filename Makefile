@@ -316,11 +316,10 @@ host-pluginfs-unpack:
 	# clear out old plugin completely
 	sudo rm -rf install/v2plugin/rootfs
 	mkdir -p install/v2plugin/rootfs
-	#mkdir /v2plugin/rootfs
-	#cp install/v2plugin/config.json /v2plugin
 	sudo tar -xf install/v2plugin/${V2PLUGIN_TAR_FILENAME} \
-		-C install/v2plugin/rootfs/
-		#-C /v2plugin/rootfs install/v2plugin/rootfs/${V2PLUGIN_TAR_FILENAME}
+		-C install/v2plugin/rootfs/ \
+		--exclude=usr/share/terminfo --exclude=dev/null \
+		--exclude=etc/terminfo/v/vt220
 
 #demo-v2plugin: start host-pluginfs-create demo-v2plugin-restart
 #demo-v2plugin-restart:
