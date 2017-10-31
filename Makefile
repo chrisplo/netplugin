@@ -39,13 +39,10 @@ all: build unit-test system-test ubuntu-tests
 # 'all-CI' target is used by the scripts/CI.sh that passes appropriate set of
 # ENV variables (from the jenkins job) to run OS (centos, ubuntu etc) and
 # sandbox specific(vagrant, docker-in-docker)
-all-CI: stop clean start
-	make ssh-build
-	vagrant ssh netplugin-node1 -c 'sudo -i bash -lc "source /etc/profile.d/envvar.sh \
-		&& cd /opt/gopath/src/github.com/contiv/netplugin \
-		&& make ${CI_HOST_TARGETS}"'
+all-CI: stop clean start ssh-build
+	$(call make-on-node1, $(CI_HOST_TARGETS))
 ifdef SKIP_SYSTEM_TEST
-	echo "Skipping system tests"
+	@echo "Skipping system tests"
 else
 	make system-test
 endif
@@ -215,10 +212,8 @@ demo: ssh-build
 ssh:
 	@vagrant ssh netplugin-node1 -c 'bash -lc "cd /opt/gopath/src/github.com/contiv/netplugin/ && bash"' || echo 'Please run "make demo"'
 
-vagrant-build:
-	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make run-build install-shell-completion"'
-
-ssh-build: start vagrant-build
+ssh-build: start
+	$(call make-on-node1, run-build install-shell-completion)
 
 unit-test: stop clean
 	./scripts/unittests -vagrant
@@ -311,6 +306,7 @@ host-plugin-create:
 
 # re-deploy the v2plugin in docker with latest versioned binaries
 host-plugin-update: host-plugin-remove unarchive host-plugin-create
+	rm -rf install/v2plugin/rootfs
 
 # cleanup all containers, recreate and start the v2plugin on all hosts
 # uses the latest compile binaries
@@ -379,7 +375,8 @@ unarchive:
 # pulls netplugin binaries from build container
 binaries-from-container:
 	docker rm netplugin-build 2>/dev/null || :
-	c_id=$$(docker create --name netplugin-build netplugin-build:$(NETPLUGIN_CONTAINER_TAG)) && \
+	c_id=$$(docker create --name netplugin-build \
+		 netplugin-build:$(NETPLUGIN_CONTAINER_TAG)) && \
 	docker cp \
 		$${c_id}:/go/src/github.com/contiv/netplugin/netplugin-version ./ && \
 	for f in netplugin netmaster netctl contivk8s netcontiv; do \
@@ -403,6 +400,7 @@ tar: compile-with-docker binaries-from-container archive
 clean-tar:
 	@rm -f $(TAR_LOC)/*.$(TAR_EXT)
 	@rm -f ${VERSION_FILE}
+	@rm -f install/v2plugin/v2plugin-*.tar.gz
 
 # GITHUB_USER and GITHUB_TOKEN are needed be set to run github-release
 release: tar
