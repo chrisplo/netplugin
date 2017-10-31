@@ -215,8 +215,10 @@ demo: ssh-build
 ssh:
 	@vagrant ssh netplugin-node1 -c 'bash -lc "cd /opt/gopath/src/github.com/contiv/netplugin/ && bash"' || echo 'Please run "make demo"'
 
-ssh-build: start
+vagrant-build:
 	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make run-build install-shell-completion"'
+
+ssh-build: start vagrant-build
 
 unit-test: stop clean
 	./scripts/unittests -vagrant
@@ -328,16 +330,35 @@ host-pluginfs-unpack:
 		--exclude=usr/share/terminfo --exclude=dev/null \
 		--exclude=etc/terminfo/v/vt220
 
+# Runs make targets on the first netplugin vagrant node
+# this is used as a macro like $(call make-on-node1, compile checks)
+make-on-node1 = vagrant ssh netplugin-node1 -c '\
+	bash -lc "source /etc/profile.d/envvar.sh \
+	&& cd /opt/gopath/src/github.com/contiv/netplugin && make $(1)"'
+
+# Calls macro make-on-node1 but can be used as a dependecy by setting
+# the variable "node1-make-targets"
+make-on-node1-dep:
+	$(call make-on-node1, $(node1-make-targets))
+
+# assumes the v2plugin archive is available, installs the v2plugin and resets
+# everything on the vm to clean state
+v2plugin-install:
+	@echo Installing v2plugin
+	$(call make-on-node1, install-shell-completion host-pluginfs-unpack \
+		host-plugin-restart host-swarm-restart)
+
+# Just like demo-v2plugin except builds are done locally and cached
+demo-v2plugin-from-local: export CONTIV_DOCKER_VERSION ?= 1.13.1
+demo-v2plugin-from-local: export CONTIV_DOCKER_SWARM := swarm_mode
+demo-v2plugin-from-local: tar host-pluginfs-create start v2plugin-install
+
 # demo v2plugin on VMs: creates plugin assets, starts docker swarm
 # then creates and enables v2plugin
 demo-v2plugin: export CONTIV_DOCKER_VERSION ?= 1.13.1
 demo-v2plugin: export CONTIV_DOCKER_SWARM := swarm_mode
-demo-v2plugin: start
-	vagrant ssh netplugin-node1 -c '\
-		bash -lc "source /etc/profile.d/envvar.sh \
-		&& cd /opt/gopath/src/github.com/contiv/netplugin \
-		&& make run-build install-shell-completion host-pluginfs-create \
-				host-pluginfs-unpack host-plugin-restart host-swarm-restart"'
+demo-v2plugin: node1-make-targets := host-pluginfs-create
+demo-v2plugin: ssh-build make-on-node1-dep v2plugin-install
 
 # release a v2 plugin from the VM
 host-plugin-release: compile host-pluginfs-create host-pluginfs-unpack host-plugin-create
@@ -369,7 +390,7 @@ binaries-from-container:
 ## Packaging and Releasing
 ##########################
 
-achive:
+archive:
 	$(TAR) --version | grep -q GNU \
 		|| (echo Please use GNU tar as \'gtar\' or \'tar\'; exit 1)
 	$(TAR) --owner=0 --group=0 -jcf $(NETPLUGIN_TAR_FILE) \
