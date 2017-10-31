@@ -97,6 +97,7 @@ checks: go-version govet-src golint-src gofmt-src misspell-src
 checks-with-docker:
 	scripts/code_checks_in_docker.sh $(PKG_DIRS)
 
+# install binaries into GOPATH and update file netplugin-version
 compile:
 	cd $(GOPATH)/src/github.com/contiv/netplugin && \
 	NIGHTLY_RELEASE=${NIGHTLY_RELEASE} BUILD_VERSION=${BUILD_VERSION} \
@@ -104,7 +105,7 @@ compile:
 	scripts/build.sh
 
 # fully prepares code for pushing to branch, includes building binaries
-run-build: deps checks clean compile
+run-build: deps checks clean compile archive
 
 compile-with-docker:
 	docker build \
@@ -294,18 +295,24 @@ host-restart:
 host-pluginfs-create:
 	./scripts/v2plugin_rootfs.sh
 
+# remove the v2plugin from docker
 host-plugin-remove:
 	@echo dev: removing docker v2plugin ...
 	docker plugin disable ${CONTIV_V2PLUGIN_NAME}
 	docker plugin rm -f ${CONTIV_V2PLUGIN_NAME}
 
+# add the v2plugin to docker with the current rootfs
 host-plugin-create:
 	@echo Creating docker v2plugin
 	docker plugin create ${CONTIV_V2PLUGIN_NAME} install/v2plugin
 	docker plugin enable ${CONTIV_V2PLUGIN_NAME}
 
+# re-deploy the v2plugin in docker with latest versioned binaries
+host-plugin-update: host-plugin-remove unarchive host-plugin-create
+
 # cleanup all containers, recreate and start the v2plugin on all hosts
-host-plugin-restart:
+# uses the latest compile binaries
+host-plugin-restart: unarchive
 	@echo dev: restarting services...
 	cd $(GOPATH)/src/github.com/contiv/netplugin/scripts/python \
 		&& PYTHONIOENCODING=utf-8 ./startPlugin.py -nodes ${CLUSTER_NODE_IPS} \
@@ -321,48 +328,56 @@ host-pluginfs-unpack:
 		--exclude=usr/share/terminfo --exclude=dev/null \
 		--exclude=etc/terminfo/v/vt220
 
-#demo-v2plugin: start host-pluginfs-create demo-v2plugin-restart
-#demo-v2plugin-restart:
-#	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-plugin-restart host-swarm-restart"'
-
 # demo v2plugin on VMs: creates plugin assets, starts docker swarm
 # then creates and enables v2plugin
 demo-v2plugin: export CONTIV_DOCKER_VERSION ?= 1.13.1
 demo-v2plugin: export CONTIV_DOCKER_SWARM := swarm_mode
 demo-v2plugin: start
-	vagrant ssh netplugin-node1 -c 'bash -lc "source /etc/profile.d/envvar.sh && cd /opt/gopath/src/github.com/contiv/netplugin && make host-pluginfs-create host-pluginfs-unpack host-plugin-restart host-swarm-restart"'
+	vagrant ssh netplugin-node1 -c '\
+		bash -lc "source /etc/profile.d/envvar.sh \
+		&& cd /opt/gopath/src/github.com/contiv/netplugin \
+		&& make run-build install-shell-completion host-pluginfs-create \
+				host-pluginfs-unpack host-plugin-restart host-swarm-restart"'
 
 # release a v2 plugin from the VM
-host-plugin-release: host-pluginfs-create host-plugin-create
+host-plugin-release: compile host-pluginfs-create host-plugin-create
 	@echo dev: pushing ${CONTIV_V2PLUGIN_NAME} to docker hub
 	@echo dev: need docker login with user in contiv org
 	docker plugin push ${CONTIV_V2PLUGIN_NAME}
 
-# set NETPLUGIN_BIN_DIR as destination directory for netplugin binaries
-unpack_tar:
-	[[ -n "${NETPLUGIN_BIN_DIR}" ]]
-	tar --preserve -xf $(NETPLUGIN_TAR_FILE) -C $(NETPLUGIN_BIN_DIR)
-
-##########################
-## Packaging and Releasing
-##########################
-
-# build tarball
-tar: compile-with-docker
+# unarchive versioned binaries to bin, usually as a helper for other targets
+# uses the version stored in file 'netplugin-version' which is produced anytime
+# binaries are compiled (and that version can be set with env var
+# 'BUILD_VERSION'
+unarchive:
 	@# $(NETPLUGIN_TAR_FILE) depends on local file netplugin-version (exists in image),
 	@# but it is evaluated after we have extracted that file to local disk
-	docker rm netplugin-build >/dev/null 2>&1 || :
+	@echo Updating bin/ with binaries versioned $(VERSION)
+	tar -xf $(NETPLUGIN_TAR_FILE) -C bin
+
+# pulls netplugin binaries from build container
+binaries-from-container:
+	docker rm netplugin-build 2>/dev/null || :
 	c_id=$$(docker create --name netplugin-build netplugin-build:$(NETPLUGIN_CONTAINER_TAG)) && \
 	docker cp \
 		$${c_id}:/go/src/github.com/contiv/netplugin/netplugin-version ./ && \
 	for f in netplugin netmaster netctl contivk8s netcontiv; do \
 		docker cp -a $${c_id}:/go/bin/$$f bin/$$f; done && \
 	docker rm $${c_id}
+
+##########################
+## Packaging and Releasing
+##########################
+
+achive:
 	$(TAR) --version | grep -q GNU \
 		|| (echo Please use GNU tar as \'gtar\' or \'tar\'; exit 1)
 	$(TAR) --owner=0 --group=0 -jcf $(NETPLUGIN_TAR_FILE) \
 		-C bin netplugin netmaster netctl contivk8s netcontiv \
 		-C ../scripts contrib/completion/bash/netctl get-contiv-diags
+
+# build versioned archive of netplugin binaries
+tar: compile-with-docker binaries-from-container archive
 
 clean-tar:
 	@rm -f $(TAR_LOC)/*.$(TAR_EXT)
