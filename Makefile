@@ -340,7 +340,7 @@ demo-v2plugin: start
 				host-pluginfs-unpack host-plugin-restart host-swarm-restart"'
 
 # release a v2 plugin from the VM
-host-plugin-release: compile host-pluginfs-create host-plugin-create
+host-plugin-release: compile host-pluginfs-create host-pluginfs-unpack host-plugin-create
 	@echo dev: pushing ${CONTIV_V2PLUGIN_NAME} to docker hub
 	@echo dev: need docker login with user in contiv org
 	docker plugin push ${CONTIV_V2PLUGIN_NAME}
